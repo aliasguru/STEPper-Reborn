@@ -629,24 +629,6 @@ def load_step(
 
 
 class PG_Stepper(bpy.types.PropertyGroup):
-    build_materials: bpy.props.BoolProperty(
-        name="Build Materials",
-        description="Build materials from STEP file colors",
-        default=True,
-    )
-
-    hack_skip_zero_solids: bpy.props.BoolProperty(
-        name="Skip Faulty Solids",
-        description="Skip some shapes the library hangs on and fails to load",
-        default=False,
-    )
-
-    simpler_parameters: bpy.props.BoolProperty(
-        name="Artist Friendly Parameters",
-        description="Instead of linear and angle deflection values, use only detail setting",
-        default=False,
-    )
-
     detail_level: bpy.props.IntProperty(
         name="Mesh Detail",
         description="How detailed you want the mesh to be",
@@ -813,7 +795,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             # row = col.row()
             # row.prop(self, "merge_distance")
 
-            if bpy.context.scene.stepper.simpler_parameters:
+            if GetAddonPreferences().simpler_parameters:
                 row = body.row()
                 row.prop(self, "detail_level")
 
@@ -833,7 +815,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         # print(type(self.files))
         # print(dir(self.files))
         l_def, a_def = self.lin_deflection * 2000, self.ang_deflection
-        if bpy.context.scene.stepper.simpler_parameters:
+        if GetAddonPreferences().simpler_parameters:
             a_def, l_def = calculate_detail_level(self.detail_level)
 
         import_files = [i.name for i in self.files]
@@ -992,7 +974,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         lin_def = context.scene.stepper.lin_deflection * 2000
         ang_def = context.scene.stepper.ang_deflection
         # merge_distance = context.scene.stepper.merge_distance
-        if bpy.context.scene.stepper.simpler_parameters:
+        if GetAddonPreferences().simpler_parameters:
             ang_def, lin_def = calculate_detail_level(
                 bpy.context.scene.stepper.detail_level
             )
@@ -1067,7 +1049,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
         # row = col.row()
         # row.prop(prg, "merge_distance")
 
-        if bpy.context.scene.stepper.simpler_parameters:
+        if GetAddonPreferences().simpler_parameters:
             row = col.row()
             row.prop(prg, "detail_level")
 
@@ -1152,20 +1134,49 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
             row.label(text="Select active STEP object")
 
 
+#===============================================================================
+#    retrieve Addon Preferences
+#===============================================================================
+def GetAddonPreferences(context:bpy.context):
+    '''
+    returns the preferences for this addon
+    '''
+    addon_preferences = context.preferences.addons[__package__].preferences    #    @UndefinedVariable
+    return addon_preferences
+
+
 class STEP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+
+    build_materials: bpy.props.BoolProperty(
+        name="Build Materials",
+        description="Build materials from STEP file colors",
+        default=True,
+    )
+
+    hack_skip_zero_solids: bpy.props.BoolProperty(
+        name="Skip Faulty Solids",
+        description="Skip some shapes the library hangs on and fails to load",
+        default=False,
+    )
+
+    simpler_parameters: bpy.props.BoolProperty(
+        name="Artist Friendly Parameters",
+        description="Instead of linear and angle deflection values, use only detail setting",
+        default=True,
+    )
 
     def draw(self, context):
         layout = self.layout
 
         row = layout.row()
-        row.prop(bpy.context.scene.stepper, "build_materials")
+        row.prop(self, "build_materials")
 
         row = layout.row()
-        row.prop(bpy.context.scene.stepper, "hack_skip_zero_solids")
+        row.prop(self, "hack_skip_zero_solids")
 
         row = layout.row()
-        row.prop(bpy.context.scene.stepper, "simpler_parameters")
+        row.prop(self, "simpler_parameters")
 
         # row = layout.row()
         # row.prop(bpy.context.scene.stepper, "hierarchy_types")
