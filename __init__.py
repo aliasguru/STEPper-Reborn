@@ -13,16 +13,6 @@
 #
 # Copyright 2021 Tommi Hyppänen
 
-bl_info = {
-    "name": "STEPper Reborn",
-    "author": "Romain Guimbal (maintainer), Ambi (original creator)",
-    "description": "STEP importer, OpenCASCADE-based",
-    "blender": (5, 1, 0),
-    "version": (2, 1, 0),
-    "location": "3D View > Tools panel > Stepper",
-    "category": "Import",
-}
-
 INSIDE_BLENDER = True
 try:
     import bpy
