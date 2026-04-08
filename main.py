@@ -561,6 +561,8 @@ def load_step(
             obj["STEP_file"] = filepath
             obj["STEP_name"] = name
             obj["STEP_tree_location"] = node_index
+            obj["STEP_scale"] = scale
+            obj["STEP_up"] = up_as[0]
             created_uuid[self_uuid] = obj
 
     # assert len(created_objs) == len(shapes_labels)
