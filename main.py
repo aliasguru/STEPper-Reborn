@@ -802,7 +802,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             # row = col.row()
             # row.prop(self, "merge_distance")
 
-            if GetAddonPreferences().simpler_parameters:
+            if GetAddonPreferences(context).simpler_parameters:
                 row = body.row()
                 row.prop(self, "detail_level")
 
@@ -822,7 +822,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         # print(type(self.files))
         # print(dir(self.files))
         l_def, a_def = self.lin_deflection * 2000, self.ang_deflection
-        if GetAddonPreferences().simpler_parameters:
+        if GetAddonPreferences(context).simpler_parameters:
             a_def, l_def = calculate_detail_level(self.detail_level)
 
         import_files = [i.name for i in self.files]
@@ -981,7 +981,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         lin_def = context.scene.stepper.lin_deflection * 2000
         ang_def = context.scene.stepper.ang_deflection
         # merge_distance = context.scene.stepper.merge_distance
-        if GetAddonPreferences().simpler_parameters:
+        if GetAddonPreferences(context).simpler_parameters:
             ang_def, lin_def = calculate_detail_level(
                 bpy.context.scene.stepper.detail_level
             )
@@ -1056,7 +1056,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
         # row = col.row()
         # row.prop(prg, "merge_distance")
 
-        if GetAddonPreferences().simpler_parameters:
+        if GetAddonPreferences(context).simpler_parameters:
             row = col.row()
             row.prop(prg, "detail_level")
 
