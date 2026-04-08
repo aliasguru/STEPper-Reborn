@@ -683,7 +683,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
 
 
 class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
-    bl_idname = "object.occ_import_step"
+    bl_idname = "import_scene.occ_import_step"
     bl_label = "Import STEP"
     bl_description = "Import a STEP file"
     bl_options = {"PRESET"}
