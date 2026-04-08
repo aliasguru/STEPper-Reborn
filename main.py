@@ -701,7 +701,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             # ("ZNEG", "Z-", "", 5),
         ],
         name="Forward",
-        default="ZPOS",
+        default = "XPOS",
         description="Forward axis of the imported model",
     )
 
@@ -714,8 +714,8 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             ("ZPOS", "Z", "", 4),
             # ("ZNEG", "Z-", "", 5),
         ],
-        name="Up Axis",
-        default="YPOS",
+        name="Up",
+        default = "ZPOS",
         description="Up axis of the imported model",
     )
 
@@ -727,7 +727,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             # ("FLAT_AND_TREE", "Flat and tree collection", "", 0),
         ],
         name="Tree hierarchy",
-        default="EMPTIES",
+        default = "FLAT",
         description="Organization styles of objects",
     )
 
