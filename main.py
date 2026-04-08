@@ -432,6 +432,25 @@ def build_nurbs(step_reader, shp, name):
         return bpy.context.view_layer.objects.active
 
 
+def freeze_matrix(objs):
+    identity_vec = Vector((1, 1, 1))
+
+    for o in objs:
+        mat = Matrix()
+        mat[0][0], mat[1][1], mat[2][2] = o.matrix_world.to_scale()
+
+        if o.data:
+            if o.data.users == 1:
+                o.data.transform(mat)
+                o.matrix_world = o.matrix_world.normalized()
+            elif o.scale != identity_vec:
+                instance_objs = [x for x in objs if x.data == o.data]
+                first_obj = instance_objs[0]
+                first_obj.data.transform(mat)
+                for rest_obj in instance_objs:
+                    rest_obj.matrix_world = rest_obj.matrix_world.normalized()
+
+
 def load_step(
     context,
     filepath,
