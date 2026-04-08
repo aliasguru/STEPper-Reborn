@@ -772,6 +772,21 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    def invoke(self, context, event):
+        # copy parameters from scene properties for consisistency between file selector and sidebar
+        self.detail_level = context.scene.stepper.detail_level
+        self.lin_deflection = context.scene.stepper.lin_deflection
+        self.ang_deflection = context.scene.stepper.ang_deflection
+
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def finish(self, context):
+        # copy parameters to scene properties for consisistency between file selector and sidebar
+        context.scene.stepper.detail_level = self.detail_level
+        context.scene.stepper.lin_deflection = self.lin_deflection
+        context.scene.stepper.ang_deflection = self.ang_deflection
+
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
@@ -847,6 +862,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 htypes=self.hierarchy_types,
             )
         if result:
+            self.finish(context)
             return {"FINISHED"}
         else:
             self.report(
