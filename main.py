@@ -737,35 +737,6 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         name="Scale", description="Set object scale", default=0.01, min=0.00001
     )
 
-    # In meter. Must be multiplied by 2000 to match OCC deflection length.
-    lin_deflection: bpy.props.FloatProperty(
-        name="Linear Deflection",
-        description="Max distance between the mesh and the theoretical shape. Smaller values increase polygon count",
-        default=0.001,  # 1mm
-        min=0.00001,  # 0.01mm
-        unit="LENGTH",
-        step=0.01,
-    )
-
-    ang_deflection: bpy.props.FloatProperty(
-        name="Angular Deflection",
-        description="Max angle between the tangent plane and the surrounding mesh of samples. Smaller values increase polygon count",
-        default=0.0872664,  # 5°
-        soft_min=0.00174532925,  # 0.1°
-        min=0.000001745,  # 0.0001°
-        max=math.pi,
-        unit="ROTATION",
-        step=100,  # 1°
-        # set_transform=convert()
-    )
-
-    detail_level: bpy.props.IntProperty(
-        name="Mesh Detail",
-        description="How detailed you want the mesh to be",
-        default=100,
-        min=1,
-    )
-
     custom_scale: bpy.props.BoolProperty(
         name="Custom Scale",
         description="Instead of loading the unit information from the file, determine it manually",
@@ -806,14 +777,14 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
 
             if GetAddonPreferences(context).simpler_parameters:
                 row = body.row()
-                row.prop(self, "detail_level")
+                row.prop(context.scene.stepper, "detail_level")
 
             else:
                 row = body.row()
-                row.prop(self, "lin_deflection")
+                row.prop(context.scene.stepper, "lin_deflection")
 
                 row = body.row()
-                row.prop(self, "ang_deflection")
+                row.prop(context.scene.stepper, "ang_deflection")
 
             # row = col.row()
             # row.prop(prg, "fw_as")
