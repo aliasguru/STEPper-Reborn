@@ -627,6 +627,7 @@ def load_step(
                 obj.matrix_parent_inverse = parent.matrix_world.inverted()
 
     transform_to_up(up_as[0], created_objs, scale)
+    freeze_matrix(created_objs)
 
     wm.progress_end()
     print(f"STEP loading time elapsed: {time.time()-start_time:.2f}")
