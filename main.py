@@ -306,9 +306,10 @@ def shape_size(shp):
     return diag
 
 
-def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
+def build_mesh(context, step_reader, obj, shp, lind, angd, vcol_name="Colors"):
     hacks = set([])
-    if bpy.context.scene.stepper.hack_skip_zero_solids:
+    prefs = GetAddonPreferences(context)
+    if prefs.hack_skip_zero_solids:
         hacks.add("skip_solids")
 
     # adaptative = bpy.context.scene.stepper.use_adaptive_resolution
@@ -336,7 +337,7 @@ def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
         mesh.get_loop_uvs(),
         mesh.get_loop_normals(),
         mesh.get_loop_material_names(),
-        build_materials=bpy.context.scene.stepper.build_materials,
+        build_materials=prefs.build_materials,
     )
 
     return mesh.matrix
@@ -533,7 +534,7 @@ def load_step(
                 # Create new mesh and object from scratch
                 obj = create_new_obj_with_mesh(name)
                 bpy.ops.object.mode_set(mode="OBJECT")
-                build_mesh(step_reader, obj, shp, lin_deflection, ang_deflection)
+                build_mesh(context, step_reader, obj, shp, lin_deflection, ang_deflection)
 
                 # TODO: nurbs changes here
                 # obj = build_nurbs(step_reader, shp, name)
@@ -542,7 +543,7 @@ def load_step(
                 created_names[shape_name] = obj
 
                 # bpy.ops.object.mode_set(mode="OBJECT")
-                # build_mesh(step_reader, obj, shp, lin_deflection, ang_deflection)
+                # build_mesh(context, step_reader, obj, shp, lin_deflection, ang_deflection)
 
         # No shape in leaf, empty creation enabled, do this
         elif hierarchy_empties:
@@ -1025,7 +1026,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                 if tag == sel_tag:
                     rebuilt_meshes.add(sel_tag)
                     print("Rebuilding:", sel_tag, obj.data.name)
-                    build_mesh(step_reader, obj, shp, lin_def, ang_def)
+                    build_mesh(context, step_reader, obj, shp, lin_def, ang_def)
                     obj.display_type = "TEXTURED"
                     build_tags.add(obj["STEP_tag"])
                     break
