@@ -1171,12 +1171,20 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
 #===============================================================================
 #    retrieve Addon Preferences
 #===============================================================================
+class FakeAddonPreferences:
+    build_materials = True
+    hack_skip_zero_solids = False
+    simpler_parameters = True
+
 def GetAddonPreferences(context:bpy.context):
     '''
     returns the preferences for this addon
     '''
-    addon_preferences = context.preferences.addons[__package__].preferences    #    @UndefinedVariable
-    return addon_preferences
+    if bpy.app.background:
+        # bail out if someone calls this from the command line, since there is no UI to edit preferences and they are not saved in the file
+        return FakeAddonPreferences()
+
+    return context.preferences.addons[__package__].preferences    #    @UndefinedVariable
 
 
 class STEP_AddonPreferences(bpy.types.AddonPreferences):
