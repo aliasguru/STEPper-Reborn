@@ -1031,12 +1031,21 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                     build_tags.add(obj["STEP_tag"])
                     break
 
+            #    re-apply scale and orientation
+            transform_to_up(obj["STEP_up"], [obj, ], obj["STEP_scale"])
+
             wm.progress_update(progress_count)
+
+        #    freeze matrix again
+        freeze_matrix(selected_objects)
 
         wm.progress_end()
 
         for obj in context.selected_objects:
             obj.display_type = "TEXTURED"
+
+            #    sheepily reapply the location
+            obj.location /= obj["STEP_scale"]
 
         return {"FINISHED"}
 
