@@ -574,28 +574,13 @@ def load_step(
 
     # build flat collection
     if hierarchy_flat:
-        flat_collection = bpy.data.collections.new(filename + ".flat")
+        flat_collection = bpy.data.collections.new(filename)
         bpy.context.scene.collection.children.link(flat_collection)
 
-        created_collections = {}
         for obj in created_objs:
-            group_name = obj["STEP_name"]
-
-            # max collection name len = 61
-            if len(group_name) > 50:
-                group_name = group_name[:25] + "_" + group_name[-25:]
-
-            # TODO: check dupe collections for dupe imports
-            if group_name not in created_collections:
-                group_collection = bpy.data.collections.new(group_name)
-                created_collections[group_name] = group_collection
-                flat_collection.children.link(group_collection)
-            else:
-                group_collection = created_collections[group_name]
-
             global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
             set_obj_matrix_world(obj, global_t)
-            group_collection.objects.link(obj)
+            flat_collection.objects.link(obj)
 
     # build tree of collections
     if hierarchy_tree:
