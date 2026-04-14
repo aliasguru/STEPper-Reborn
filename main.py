@@ -15,7 +15,6 @@
 # Copyright: Tommi Hyppänen
 
 from ast import operator
-from ast import operator
 import ntpath
 import os
 import time
@@ -98,91 +97,67 @@ def add_material(name, color, link_vertex_color=False, overwrite=False):
 def bpy_update_object_data(
     objdata, bm, vcol_name, colors, uvs, norms, mat_names, build_materials=True
 ):
-    if build_materials:
-        # set colors and mats
-        obj_mats = {}
-        for obi, ob_mat in enumerate(objdata.materials):
-            obj_mats[ob_mat.name] = obi
-        mat_counter = 0
-
-    if len(colors) > 0:
-        color_layer = bm.loops.layers.color.get(vcol_name)
-        if color_layer is None:
-            color_layer = bm.loops.layers.color.new(vcol_name)
-        # uv_layer = bm.loops.layers.uv.verify()
-        i = 0
-        for face in bm.faces:
-            mat_col = (0.5, 0.5, 0.5)
-            mat_col_name = None
-            for loop in face.loops:
-                # TODO: good, proper aspect ratio UV
-                # loop[uv_layer].uv = uvs[i]
-                if colors[i][0] >= 0.0:
-                    loop[color_layer] = (*colors[i], 1.0)
-                    mat_col = colors[i]
-                    mat_col_name = mat_names[i]
-                else:
-                    # No color: set it to default gray
-                    loop[color_layer] = (0.5, 0.5, 0.5, 1.0)
-                i += 1
-
-            if build_materials:
-                # Translate color into name, if not defined
-                if mat_col_name is None:
-                    mat_col_name = "STEP_" + "".join(
-                        "{0:0{1}x}".format(int(mat_col[i] * 255), 2) for i in range(3)
-                    )
-
-                # If material doesn't exist, create it
-                if mat_col_name not in bpy.data.materials:
-                    add_material(mat_col_name, mat_col, link_vertex_color=False)
-
-                # If material exists but it's not yet in object material slot, add it
-                if mat_col_name not in obj_mats:
-                    obj_mats[mat_col_name] = mat_counter
-                    objdata.materials.append(bpy.data.materials[mat_col_name])
-                    mat_counter += 1
-
-                face.material_index = obj_mats[mat_col_name]
-    else:
-        # TODO: if no colors defined, create and apply default material
-        pass
-
-    # print("Polys: {}, Verts: {}".format(len(bm.faces), len(bm.verts)))
-
-    # Save face situation so we can adjust accordingly later
-    # pre_faces = bm.faces[:]
-
-    # # Merge verts near each other
-    # if merge_distance > 0.0:
-    #     print("Removing doubles at distance:", merge_distance)
-    #     bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=merge_distance)
-
-    # Remove normals from array which don't exist in the mesh anymore
-    # removed = set()
-    # for fi, f in enumerate(pre_faces):
-    #     if not f.is_valid:
-    #         for i in range(fi * 3, fi * 3 + 3):
-    #             removed.add(i)
-
-    # Update mesh from Bmesh
-    # Apply also in edit mode, not just object mode
+    # Flush BMesh (seams, sharp edges) to mesh.  Color and material indices are
+    # applied afterwards via the faster mesh-level foreach_set API, which avoids
+    # N_tris*3 Python-level BMesh attribute writes.
     prev_mode = bpy.context.object.mode
     bpy.ops.object.mode_set(mode="OBJECT")
-
     bm.to_mesh(objdata)
-
     if len(norms) > 0:
-        # Apply normals to mesh if they exist
-        # objdata.use_auto_smooth = True
-        # objdata.auto_smooth_angle = 3.14159
-
-        # Filter removed items from norms
-        # norms = [n for ni, n in enumerate(norms) if ni not in removed]
         objdata.normals_split_custom_set(np.array(norms))
-
-    # Return to previous object/edit mode
     bpy.ops.object.mode_set(mode=prev_mode)
+
+    if not colors:
+        return
+
+    n_loops = len(colors)   # = N_tris * 3
+    n_faces = n_loops // 3
+
+    # All 3 loops of a triangle share the same per-face color/mat_name.
+    # Build per-face RGBA once, then tile to loops with a single numpy repeat.
+    face_rgba = np.empty((n_faces, 4), dtype=np.float32)
+    face_rgba[:, 3] = 1.0
+
+    mat_index_arr = np.zeros(n_faces, dtype=np.int32) if build_materials else None
+
+    if build_materials:
+        obj_mats = {ob_mat.name: obi for obi, ob_mat in enumerate(objdata.materials)}
+        mat_counter = 0
+
+    for fi in range(n_faces):
+        col = colors[fi * 3]
+        mn  = mat_names[fi * 3]
+        if col is not None and col[0] >= 0.0:
+            r, g, b = float(col[0]), float(col[1]), float(col[2])
+        else:
+            r, g, b = 0.5, 0.5, 0.5
+            mn = None
+        face_rgba[fi, 0] = r
+        face_rgba[fi, 1] = g
+        face_rgba[fi, 2] = b
+
+        if build_materials:
+            if mn is None:
+                mn = "STEP_" + "{:02x}{:02x}{:02x}".format(
+                    int(r * 255), int(g * 255), int(b * 255)
+                )
+            if mn not in bpy.data.materials:
+                add_material(mn, (r, g, b), link_vertex_color=False)
+            if mn not in obj_mats:
+                obj_mats[mn] = mat_counter
+                objdata.materials.append(bpy.data.materials[mn])
+                mat_counter += 1
+            mat_index_arr[fi] = obj_mats[mn]
+
+    # Tile face RGBA to per-loop data and write at C level
+    flat_rgba = np.repeat(face_rgba, 3, axis=0).ravel()
+    color_layer = objdata.vertex_colors.get(vcol_name)
+    if color_layer is None:
+        color_layer = objdata.vertex_colors.new(name=vcol_name)
+    color_layer.data.foreach_set("color", flat_rgba)
+
+    if build_materials:
+        objdata.polygons.foreach_set("material_index", mat_index_arr)
 
 
 def calculate_detail_level(dlev):
@@ -312,25 +287,91 @@ def build_mesh(context, step_reader, obj, shp, lind, angd, vcol_name="Colors"):
     if prefs.hack_skip_zero_solids:
         hacks.add("skip_solids")
 
-    # adaptative = bpy.context.scene.stepper.use_adaptive_resolution
-    # if adaptative :
-    #     size = shape_size(shp)
-    #     angd *= size
+    # import cProfile
+    # profiler = cProfile.Profile()
+    # profiler.enable()
+    start_time = time.time()
 
     mesh: TriMesh = step_reader.build_trimesh(
         shp, lin_def=lind, ang_def=angd, hacks=hacks
     )
+    print(f"Mesh build time elapsed: {time.time()-start_time:.2f}", end="")
+
+    # profiler.disable()
+    # profiler.dump_stats("profile_output.prof")
 
     mesh.fuse_verts()
     mesh.filter_zero_area()
     mesh.filter_same_face()
 
     print(f"[bm] {len(mesh.verts)}", end="")
+
+    # --- Build geometry at C level (replaces N individual bm.verts.new /
+    #     bm.faces.new Python calls in add_to_bm) ---
+    objdata = obj.data
+    objdata.from_pydata(mesh.verts, [], [t.indices for t in mesh.tris])
+
+    # Load into BMesh for edge marking and color / material assignment.
+    # from_mesh() is a single C-level bulk operation, much faster than
+    # constructing the BMesh vertex by vertex.
     bm = bmesh.new()
-    mesh.add_to_bm(bm, edges_as_seams=True, discontinuity_as_sharp=True)
+    bm.from_mesh(objdata)
+    bm.faces.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    bm.verts.ensure_lookup_table()
+
+    # Pre-extract batch per face to avoid repeated Python attribute access in loop
+    batches = [t.batch for t in mesh.tris]
+
+    # Seam edges: mark boundaries between different shape batches
+    for e in bm.edges:
+        f = e.link_faces
+        if len(f) == 2 and batches[f[0].index] != batches[f[1].index]:
+            e.seam = True
+
+    # Sharp edges: mark where per-vertex normals are discontinuous.
+    # Pre-build face_vert_norms[face_idx][global_vert_idx] = norm to replace
+    # the inner range(3) scan with O(1) dict lookups.
+    face_vert_norms = [
+        {t.indices[j]: t.norms[j] for j in range(3)}
+        for t in mesh.tris
+    ]
+
+    def _project_plane_normalize(plane, vec):
+        prj = vec - (plane * np.dot(plane, vec))
+        prjn = np.linalg.norm(prj)
+        return prj / prjn if prjn != 0.0 else np.array([0.0, 0.0, 1.0])
+
+    def _prjtest(plane, n0, n1, margin):
+        p0 = _project_plane_normalize(plane, n0)
+        prj = _project_plane_normalize(plane, n1)
+        return np.dot(p0, prj) < 1.0 - margin
+
+    margin = 0.02
+    for e in bm.edges:
+        fi = [f.index for f in e.link_faces]
+        if len(fi) != 2:
+            continue
+        fvn0 = face_vert_norms[fi[0]]
+        fvn1 = face_vert_norms[fi[1]]
+        ev0 = e.verts[0].index
+        ev1 = e.verts[1].index
+        n00 = fvn0.get(ev0)
+        n10 = fvn1.get(ev0)
+        n01 = fvn0.get(ev1)
+        n11 = fvn1.get(ev1)
+        if n00 is None or n10 is None or n01 is None or n11 is None:
+            e.smooth = True
+            continue
+        plane = np.array((e.verts[0].co - e.verts[1].co).normalized())
+        if _prjtest(plane, n00, n10, margin) and _prjtest(plane, n01, n11, margin):
+            e.smooth = False
+        else:
+            e.smooth = True
+
     mesh.fill_empty_color()
     bpy_update_object_data(
-        obj.data,
+        objdata,
         bm,
         vcol_name,
         mesh.get_loop_colors(),
