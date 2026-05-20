@@ -29,6 +29,8 @@ from .utils import (
     calculate_detail_level,
     transform_to_up,
     choose_hierarchy_types,
+    GetAddonPreferences,
+    FakeAddonPreferences,
 )
 from .build_mesh import build_mesh, mesh_from_shape
 from .build_blender_hierarchy import build_blender_hierarchy
@@ -104,6 +106,7 @@ def load_step(
     wm.progress_begin(0, total)
     for i, (shp, node_index) in enumerate(all_shapes):
         obj = mesh_from_shape(
+            context,
             step_reader,
             shp,
             tree,
@@ -698,19 +701,6 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
             bxp = layout.box()
             row = bxp.row()
             row.label(text="Select active STEP object")
-
-
-class FakeAddonPreferences:
-    build_materials = True
-    hack_skip_zero_solids = False
-    simpler_parameters = True
-
-
-def GetAddonPreferences(context: bpy.context):
-    """Returns addon preferences; falls back to defaults in headless/background mode."""
-    if bpy.app.background:
-        return FakeAddonPreferences()
-    return context.preferences.addons[__package__].preferences    #    @UndefinedVariable
 
 
 class STEP_AddonPreferences(bpy.types.AddonPreferences):

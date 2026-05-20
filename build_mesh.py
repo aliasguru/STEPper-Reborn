@@ -2,12 +2,13 @@ import bpy
 import bmesh
 import numpy as np
 from .trimesh import TriMesh
-from .utils import bpy_update_object_data, create_new_obj_with_mesh
+from .utils import bpy_update_object_data, create_new_obj_with_mesh, GetAddonPreferences
 
 
-def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
+def build_mesh(context, step_reader, obj, shp, lind, angd, vcol_name="Colors"):
+    prefs = GetAddonPreferences(context)
     hacks = set([])
-    if bpy.context.scene.stepper.hack_skip_zero_solids:
+    if prefs.hack_skip_zero_solids:
         hacks.add("skip_solids")
 
     mesh: TriMesh = step_reader.build_trimesh(
@@ -23,6 +24,7 @@ def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
     # --- Build geometry at C level (replaces N individual bm.verts.new /
     #     bm.faces.new Python calls in add_to_bm) ---
     objdata = obj.data
+    objdata.clear_geometry()
     objdata.from_pydata(mesh.verts, [], [t.indices for t in mesh.tris])
 
     # Load into BMesh for edge marking and color / material assignment.
@@ -89,13 +91,14 @@ def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
         mesh.get_loop_uvs(),
         mesh.get_loop_normals(),
         mesh.get_loop_material_names(),
-        build_materials=bpy.context.scene.stepper.build_materials,
+        build_materials=prefs.build_materials,
     )
 
     return mesh.matrix
 
 
 def mesh_from_shape(
+    context,
     step_reader,
     shp,
     tree,
@@ -136,7 +139,7 @@ def mesh_from_shape(
             print("[Build]", end="", flush=True)
             obj = create_new_obj_with_mesh(name)
             bpy.ops.object.mode_set(mode="OBJECT")
-            build_mesh(step_reader, obj, shp, lin_deflection, ang_deflection)
+            build_mesh(context, step_reader, obj, shp, lin_deflection, ang_deflection)
             created_names[shape_name] = obj
 
     # No shape in leaf, empty creation enabled, do this

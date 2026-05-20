@@ -236,6 +236,25 @@ def choose_hierarchy_types(htypes):
 
 
 # ---------------------------------------------------------------------------
+# Addon preferences helpers
+# ---------------------------------------------------------------------------
+
+
+class FakeAddonPreferences:
+    """Fallback preferences used when running in background / headless mode."""
+    build_materials = True
+    hack_skip_zero_solids = False
+    simpler_parameters = True
+
+
+def GetAddonPreferences(context):
+    """Returns addon preferences; falls back to defaults in headless/background mode."""
+    if bpy.app.background:
+        return FakeAddonPreferences()
+    return context.preferences.addons[__package__].preferences    #    @UndefinedVariable
+
+
+# ---------------------------------------------------------------------------
 # bmesh / vertex-color mesh update (TriMesh path)
 # ---------------------------------------------------------------------------
 
