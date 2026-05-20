@@ -149,6 +149,7 @@ def load_step(
     )
 
     transform_to_up(up_as[0], created_objs, scale)
+    freeze_matrix(created_objs)
 
     wm.progress_end()
     print(f"STEP loading time elapsed: {time.time()-start_time:.2f}")
