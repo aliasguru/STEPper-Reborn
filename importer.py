@@ -12,6 +12,8 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 # Copyright 2021 Tommi Hyppänen
+#
+# Modified 2025 Romain Guimbal
 
 
 import importlib
@@ -23,14 +25,17 @@ import numpy as np
 
 # import trimesh works in dev, but not in deploy
 from . import trimesh
+from . import nurbs
 
 importlib.reload(trimesh)
 
 from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert
 from OCP.BRepLProp import BRepLProp_SLProps
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.BRepTools import BRepTools
+from OCP.GeomConvert import GeomConvert
 from OCP.gp import gp
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Quantity import Quantity_Color, Quantity_TOC_RGB
@@ -39,7 +44,7 @@ from OCP.STEPControl import STEPControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TColStd import TColStd_SequenceOfAsciiString
 from OCP.TDataStd import TDataStd_Name
-from OCP.TDF import TDF_Label, TDF_LabelSequence
+from OCP.TDF import TDF_Tool, TDF_Label, TDF_LabelSequence
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import (
     TopAbs_COMPOUND,
@@ -85,6 +90,55 @@ def trsf_matrix(shp):
         for col in range(1, 5):
             matrix[row - 1, col - 1] = trsf.Value(row, col)
     return matrix
+
+
+def _test_shape(sh):
+    tmr = trsf_matrix(sh)
+    if np.any(tmr != np.eye(4, dtype=np.float32)[:3, :4]):
+        print(tmr)
+
+
+def nurbs_parse(current_face):
+    """Get NURBS points for a TopAbs_FACE"""
+
+    _test_shape(current_face)
+    nurbs_converter = BRepBuilderAPI_NurbsConvert(current_face)
+    nurbs_converter.Perform(current_face)
+    result_shape = nurbs_converter.Shape()
+    _test_shape(result_shape)
+    brep_face = BRep_Tool.Surface(TopoDS.Face(result_shape))
+    occ_face = GeomConvert.SurfaceToBSplineSurface(brep_face)
+    # _test_shape(occ_face)
+
+    # extract the Control Points of each face
+    n_poles_u = occ_face.NbUPoles()
+    n_poles_v = occ_face.NbVPoles()
+
+    # cycle over the poles to get their coordinates
+    points = []
+    for pole_u_direction in range(n_poles_u):
+        points.append([])
+        for pole_v_direction in range(n_poles_v):
+            pos = (pole_u_direction + 1, pole_v_direction + 1)
+            coords = occ_face.Pole(*pos)
+            np_coords = np.array((coords.X(), coords.Y(), coords.Z()))
+            weight = occ_face.Weight(*pos)
+            pt = nurbs.NurbsPoint((*np_coords, weight))
+            points[-1].append(pt)
+
+    # Get surface data (closed, periodic, degree)
+    assert len(points) > 1
+    assert len(points[0]) > 1
+    nbd = nurbs.NurbsData(points)
+
+    nbd.u_closed = occ_face.IsUClosed()
+    nbd.v_closed = occ_face.IsVClosed()
+    nbd.u_periodic = occ_face.IsUPeriodic()
+    nbd.v_periodic = occ_face.IsVPeriodic()
+    nbd.u_degree = occ_face.UDegree()
+    nbd.v_degree = occ_face.VDegree()
+
+    return nbd
 
 
 def force_ascii(i_file):
@@ -217,9 +271,13 @@ class ShapeTree:
     def get_max_id(self):
         return len(self.nodes) - 1
 
-    def add(self, parent, label) -> ShapeTreeNode:
+    def add(self, parent, lab) -> ShapeTreeNode:
+        """
+        Args:
+            lab: Shape label
+        """
         loc = len(self.nodes)
-        node = ShapeTreeNode(parent, loc, label.Tag(), get_label_name(label))
+        node = ShapeTreeNode(parent, loc, lab.Tag(), get_label_name(lab))
         self.nodes[parent].children.append(loc)
         self.nodes.append(node)
         return self.nodes[-1]
@@ -237,22 +295,29 @@ class ReadSTEP:
     def __init__(self, filename):
         self.read_file(filename)
 
-    def query_color(self, label, overwrite=False):
+    def query_color(self, lab, overwrite=False):
+        """
+        Args:
+            lab: shape label
+        """
         # default color = pink
         c = Quantity_Color(1.0, 0.0, 1.0, Quantity_TOC_RGB)
-        colorset = False
+        iscolorset = False
         colortype = None
 
-        shape = self.shape_tool.GetShape_s(label)
+        shape = self.shape_tool.GetShape_s(lab)
+        print(shape.ShapeType())
 
         c_gen = self.color_tool.GetColor(shape, XCAFDoc_ColorGen, c)
         c_surf = self.color_tool.GetColor(shape, XCAFDoc_ColorSurf, c)
-        c_curv = self.color_tool.GetColor(shape, XCAFDoc_ColorCurv, c)
+        c_curv = False #self.color_tool.GetColor(shape, XCAFDoc_ColorCurv, c) # TODO uncomment once priority are working
+
         if c_gen or c_surf or c_curv:
-            colorset = True
+            iscolorset = True
+            # Color priority (1/type) is the same as CAD assistant material tree display
             colortype = c_gen * 1 + c_surf * 2 + c_curv * 3
 
-        return c, colortype, colorset
+        return c, colortype, iscolorset
 
     def print_all_colors(self):
         tcol = Quantity_Color(1.0, 0.0, 1.0, Quantity_TOC_RGB)
@@ -469,15 +534,12 @@ class ReadSTEP:
 
         self.init_reader(filename)
 
-        # output_shapes = {}
-        # outliers = defaultdict(set)
-
-        def _cprio(lab, shape):
-            "Get label color"
-            tc, ctype, ok = self.query_color(lab)
-            self.face_colors[shape] = tc if ok else None
-            if ok:
-                return ctype
+        def _set_color_and_get_priority(shape_label, shape):
+            """Type == Priority here"""
+            c, color_type, has_color = self.query_color(shape_label)
+            self.face_colors[shape] = c if has_color else None
+            if has_color:
+                return color_type
             else:
                 return 0
 
@@ -526,7 +588,8 @@ class ReadSTEP:
 
                 self.shape_label[shape] = lab
 
-                self.face_color_priority[shape] = _cprio(lab, shape)
+                # TODO Color priority usage looks non-implemented
+                self.face_color_priority[shape] = _set_color_and_get_priority(lab, shape)
 
                 l_subss = TDF_LabelSequence()
                 self.shape_tool.GetSubShapes_s(lab, l_subss)
@@ -536,17 +599,23 @@ class ReadSTEP:
                     shape_sub = self.shape_tool.GetShape_s(lab_subs)
                     self.shape_label[shape_sub] = lab_subs
                     self.sub_shapes[shape].append(shape_sub)
-                    self.face_color_priority[shape_sub] = _cprio(lab_subs, shape_sub)
-                # Color priority is the same as CAD assistant material tree display
+                    self.face_color_priority[shape_sub] = _set_color_and_get_priority(
+                        lab_subs, shape_sub
+                    )
             else:
                 print("DataExchange error: Item is neither assembly or a simple shape")
 
         def _get_shapes():
+            """
+            Root shapes are not part of shapes
+            """
             # self.shape_tool.UpdateAssemblies()
 
+            # Get free shapes labels
             labels = TDF_LabelSequence()
             self.shape_tool.GetFreeShapes(labels)
 
+            # Get sub shapes of each free shape and add to tree
             tree = ShapeTree()
             for i in range(labels.Length()):
                 print(f"DataExchange: Reading shape ({i + 1}/{labels.Length()})")
@@ -560,16 +629,17 @@ class ReadSTEP:
         tree = _get_shapes()
         self.tree = tree
 
-    def triangulate_face(self, face, tform, color=None, col_name=None, batch=None):
-        bt = BRep_Tool()
+    def triangulate_face(
+        self, face, tform, brep_tool, color=None, col_name=None, batch=None
+    ):
         location = TopLoc_Location()
-        facing = bt.Triangulation_s(face, location)
+        facing = brep_tool.Triangulation_s(face, location)
         if facing is None:
             # Mesh error, no triangulation found for part
             self.import_problems["Triangulation"] += 1
             return None
 
-        # nsurf = bt.Surface(face)
+        # nsurf = brep_tool.Surface(face)
         surface = BRepAdaptor_Surface(face)
         prop = BRepLProp_SLProps(surface, 2, gp.Resolution_s())
         # prop = BRepLProp_SLProps(surface, 2, 1e-4)
@@ -679,6 +749,8 @@ class ReadSTEP:
         face_data = OrderedDict()
         batch = 0
 
+        brep_tool = BRep_Tool()
+
         # Clean all previous triangulations, then mesh all shapes at once in a
         # single C++ call so OCCT's OSD_Parallel can distribute all faces across
         # threads without Python-loop overhead between shapes.
@@ -710,7 +782,9 @@ class ReadSTEP:
                 continue
 
             trf = shp.Location().Transformation()
-            # Iterate through faces with TopExp_Explorer
+            # Iterate through faces with TopExp_Explorer.  Color/material/batch
+            # are baked directly into the TriData by triangulate_face, so no
+            # second pass (colorize/set_material_name) is needed.
             while ex.More():
                 exc = ex.Current()
                 face = TopoDS.Face_s(exc)
@@ -718,6 +792,7 @@ class ReadSTEP:
                 mesh = self.triangulate_face(
                     face,
                     trf,
+                    brep_tool,
                     color=col_rgb if col is not None else None,
                     col_name=col_name if col is not None else None,
                     batch=batch,
@@ -737,3 +812,19 @@ class ReadSTEP:
         print("[l]", end="", flush=True)
 
         return out_mesh
+
+    def build_nurbs(self, shape):
+        iter_shapes = [shape]
+        nbs = []
+        for _, shp in enumerate(iter_shapes):
+            ex = TopExp_Explorer(shp, TopAbs_FACE)
+            if not ex.More():
+                self.import_problems["Empty shape"] += 1
+                return []
+
+            while ex.More():
+                pt = nurbs_parse(TopoDS.Face(ex.Current()))
+                nbs.append(pt)
+                ex.Next()
+
+        return nbs

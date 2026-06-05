@@ -15,146 +15,19 @@
 #
 ## Modified 2025 Romain Guimbal
 
-import ntpath
 import os
-import time
 import math
 import bpy
 
-from mathutils import Vector, Matrix
 from bpy.props import StringProperty
 from bpy_extras.io_utils import ImportHelper
 from .utils import (
-    obj_unlink_all,
     calculate_detail_level,
     transform_to_up,
-    choose_hierarchy_types,
     GetAddonPreferences,
-    FakeAddonPreferences,
+    freeze_matrix,
 )
-from .build_mesh import build_mesh, mesh_from_shape
-from .build_blender_hierarchy import build_blender_hierarchy
-
-global_file_cache = {}
-
-
-def freeze_matrix(objs):
-    identity_vec = Vector((1, 1, 1))
-    for o in objs:
-        mat = Matrix()
-        mat[0][0], mat[1][1], mat[2][2] = o.matrix_world.to_scale()
-        if o.data:
-            if o.data.users == 1:
-                o.data.transform(mat)
-                o.matrix_world = o.matrix_world.normalized()
-            elif o.scale != identity_vec:
-                instance_objs = [x for x in objs if x.data == o.data]
-                first_obj = instance_objs[0]
-                first_obj.data.transform(mat)
-                for rest_obj in instance_objs:
-                    rest_obj.matrix_world = rest_obj.matrix_world.normalized()
-
-
-def load_step(
-    context,
-    filepath,
-    custom_scale=None,
-    lin_deflection=0.8,
-    ang_deflection=0.5,
-    # merge_distance=0.001,
-    up_as="Y",
-    htypes="TREE",
-):
-    from .step_reader import ReadSTEP
-
-    hierarchy_flat, hierarchy_tree, hierarchy_empties = choose_hierarchy_types(htypes)
-
-    filename = "".join(ntpath.basename(filepath).split(".")[:-1])
-
-    if filepath not in global_file_cache:
-        try:
-            step_reader = ReadSTEP(filepath)
-            global_file_cache[filepath] = step_reader
-        except AssertionError as e:
-            print(e)
-            return False
-
-    else:
-        step_reader = global_file_cache[filepath]
-        print("Loaded file from cache")
-
-    tree = step_reader.tree
-    scale = step_reader.scale
-    if custom_scale is not None:
-        scale = custom_scale
-
-    # divide by Blender unit length
-    scale /= context.scene.unit_settings.scale_length
-    print("Current Blender scale set at:", context.scene.unit_settings.scale_length)
-
-    wm = bpy.context.window_manager
-
-    created_objs = []
-    created_names = {}
-    created_uuid = {}
-
-    # traverse shapes, render in "face" mode
-    start_time = time.time()
-    all_shapes = tree.get_shapes()
-    total = len(all_shapes)
-
-    wm.progress_begin(0, total)
-    for i, (shp, node_index) in enumerate(all_shapes):
-        obj = mesh_from_shape(
-            context,
-            step_reader,
-            shp,
-            tree,
-            filename,
-            filepath,
-            hierarchy_empties,
-            node_index,
-            created_names,
-            lin_deflection,
-            ang_deflection,
-            created_uuid,
-            total,
-            i,
-        )
-        if obj:
-            created_objs.append(obj)
-        wm.progress_update(i)
-
-    # assert len(created_objs) == len(shapes_labels)
-    print("\n" + repr(step_reader.import_problems))
-
-    # Store scale and up axis on each object so rebuild operations can re-apply the transform.
-    for obj in created_objs:
-        obj["STEP_scale"] = scale
-        obj["STEP_up"] = up_as[0]
-
-    # remove all temporary links
-    for tobj in created_objs:
-        obj_unlink_all(tobj)
-
-    # build hierarchy
-    build_blender_hierarchy(
-        filename,
-        tree,
-        created_objs,
-        hierarchy_flat,
-        hierarchy_tree,
-        hierarchy_empties,
-        created_uuid,
-    )
-
-    transform_to_up(up_as[0], created_objs, scale)
-    freeze_matrix(created_objs)
-
-    wm.progress_end()
-    print(f"STEP loading time elapsed: {time.time()-start_time:.2f}")
-
-    return True
+from .object_generator import load_step, build_mesh, GLOBAL_FILE_CACHE
 
 
 class PG_Stepper(bpy.types.PropertyGroup):
@@ -413,14 +286,14 @@ class STEP_OT_ClearCache(bpy.types.Operator):
 
     def execute(self, context):
         # utils.memorytrace_print()
-        # global global_file_cache
-        # items = list(global_file_cache.values())
+        # global GLOBAL_FILE_CACHE
+        # items = list(GLOBAL_FILE_CACHE.values())
         # for entry in items:
         #     for i, shp in enumerate(entry):
         #         label, color, tag = entry[shp]
         #         # shp.Nullify()
 
-        global_file_cache.clear()
+        GLOBAL_FILE_CACHE.clear()
         return {"FINISHED"}
 
 
@@ -507,11 +380,11 @@ class STEP_OT_ReloadSTEP(bpy.types.Operator):
         return context.object is not None and "STEP_file" in context.object
 
     def execute(self, context):
-        from . import step_reader
+        from . import importer
 
         filepath = context.object["STEP_file"]
-        step_reader = step_reader.ReadSTEP(filepath)
-        global_file_cache[filepath] = step_reader
+        step_reader = importer.ReadSTEP(filepath)
+        GLOBAL_FILE_CACHE[filepath] = step_reader
         return {"FINISHED"}
 
 
@@ -532,6 +405,10 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         rebuilt_meshes = set()
         selected_objects = list(context.selected_objects)
 
+        # save current mode and switch to object mode for safe mesh rebuilding
+        prev_mode = context.mode
+        bpy.ops.object.mode_set(mode="OBJECT")
+
         lin_def = context.scene.stepper.lin_deflection * 2000
         ang_def = context.scene.stepper.ang_deflection
         # merge_distance = context.scene.stepper.merge_distance
@@ -549,7 +426,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         # Reload files if not in cache
         reload_needed = False
         for o in selected_objects:
-            if o["STEP_file"] not in global_file_cache:
+            if o["STEP_file"] not in GLOBAL_FILE_CACHE:
                 bpy.ops.object.occ_reload_step()
                 break
 
@@ -569,7 +446,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                 continue
 
             if prevname != curname:
-                step_reader = global_file_cache[curname]
+                step_reader = GLOBAL_FILE_CACHE[curname]
                 # shapes_labels = step_reader.output_shapes
                 tree = step_reader.tree
 
@@ -598,6 +475,9 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
 
             # reapply location compensation after scale bake
             obj.location /= obj["STEP_scale"]
+
+        # restore previous mode
+        bpy.ops.object.mode_set(mode=prev_mode)
 
         return {"FINISHED"}
 
@@ -631,7 +511,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
             row.prop(prg, "ang_deflection")
 
         layout = self.layout
-        # layout.label(text="Used memory: {}".format(total_size(global_file_cache)))
+        # layout.label(text="Used memory: {}".format(total_size(GLOBAL_FILE_CACHE)))
         row = layout.row()
         row.operator(STEP_OT_RebuildSelected.bl_idname, text="Rebuild selected")
 
@@ -673,14 +553,14 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
         if (
             context.object is not None
             and "STEP_file" in context.object
-            and context.object["STEP_file"] in global_file_cache
+            and context.object["STEP_file"] in GLOBAL_FILE_CACHE
         ):
             bxp = layout.box()
             bxp.label(text="Reported problems:")
 
             row = bxp.row()
             col = row.column(align=True)
-            step_reader = global_file_cache[context.object["STEP_file"]]
+            step_reader = GLOBAL_FILE_CACHE[context.object["STEP_file"]]
             for k, v in step_reader.import_problems.items():
                 row = col.row()
                 row.label(text=k + ": " + repr(v))

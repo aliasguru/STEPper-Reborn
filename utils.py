@@ -15,6 +15,7 @@
 
 import numpy as np
 import bpy
+from mathutils import Vector, Matrix
 from OCP.AIS import AIS_Shape
 
 # ---------------------------------------------------------------------------
@@ -204,6 +205,25 @@ def transform_to_up(up, chosen_objects, scale, to_cursor=True):
     #     obj.select_set(True)
 
 
+def freeze_matrix(objs):
+    """Bake object scale into mesh data so transforms stay clean.
+    Handles linked (instanced) mesh data by transforming the shared data once."""
+    identity_vec = Vector((1, 1, 1))
+    for o in objs:
+        mat = Matrix()
+        mat[0][0], mat[1][1], mat[2][2] = o.matrix_world.to_scale()
+        if o.data:
+            if o.data.users == 1:
+                o.data.transform(mat)
+                o.matrix_world = o.matrix_world.normalized()
+            elif o.scale != identity_vec:
+                instance_objs = [x for x in objs if x.data == o.data]
+                first_obj = instance_objs[0]
+                first_obj.data.transform(mat)
+                for rest_obj in instance_objs:
+                    rest_obj.matrix_world = rest_obj.matrix_world.normalized()
+
+
 def shape_size(shp):
     bb = AIS_Shape(shp).BoundingBox()
     if bb.IsVoid():
@@ -212,27 +232,55 @@ def shape_size(shp):
     return diag
 
 
-def choose_hierarchy_types(htypes):
-    """
-    Return hierarchy types selection from input string
-    """
-    hierarchy_flat = False
-    hierarchy_tree = False
-    hierarchy_empties = False
+# ---------------------------------------------------------------------------
+# Edge / mesh topology helpers (numpy sharp / seam detection)
+# ---------------------------------------------------------------------------
 
-    if htypes == "FLAT_AND_TREE":
-        hierarchy_flat = True
-        hierarchy_tree = True
-    elif htypes == "TREE":
-        hierarchy_tree = True
-    elif htypes == "FLAT":
-        hierarchy_flat = True
-    elif htypes == "EMPTIES":
-        hierarchy_empties = True
-    else:
-        assert False, "Invalid input parameter"
 
-    return hierarchy_flat, hierarchy_tree, hierarchy_empties
+def vert_of_edges(mesh: bpy.types.Mesh):
+    edge_verts = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", edge_verts)
+    edge_verts = edge_verts.reshape(-1, 2)  # transpose
+
+    return edge_verts
+
+
+def vert_coordinates_of_edges(mesh: bpy.types.Mesh, edge_verts):
+    # Vert positions
+    coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", coords)
+    coords = coords.reshape(-1, 3)
+
+    # Edge verts positions
+    vert_co_0 = np.empty((len(mesh.edges), 3), dtype=np.float32)
+    vert_co_1 = np.empty((len(mesh.edges), 3), dtype=np.float32)
+    for i in range(len(mesh.edges)):
+        vert_co_0[i] = coords[edge_verts[i, 0]]
+        vert_co_1[i] = coords[edge_verts[i, 1]]
+
+    return vert_co_0, vert_co_1
+
+
+def faces_of_edges(mesh: bpy.types.Mesh):
+    # Loop data
+    loop_edge = np.empty(len(mesh.loops), dtype=np.int32)
+    mesh.loops.foreach_get("edge_index", loop_edge)
+
+    # Poly data
+    loop_total = np.empty(len(mesh.polygons), dtype=np.int32)
+    loop_start = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", loop_total)
+    mesh.polygons.foreach_get("loop_start", loop_start)
+
+    # loop index -> poly index
+    loop_to_poly = np.repeat(np.arange(len(mesh.polygons)), loop_total)
+
+    # edge index -> list of poly indices
+    faces_of_edges = [[] for _ in range(len(mesh.edges))]
+    for loop_i, edge_i in enumerate(loop_edge):
+        faces_of_edges[edge_i].append(loop_to_poly[loop_i])
+
+    return faces_of_edges
 
 
 # ---------------------------------------------------------------------------
@@ -255,22 +303,19 @@ def GetAddonPreferences(context):
 
 
 # ---------------------------------------------------------------------------
-# bmesh / vertex-color mesh update (TriMesh path)
+# Vertex-color / material mesh update (TriMesh path)
 # ---------------------------------------------------------------------------
 
 
 def bpy_update_object_data(
-    objdata, bm, vcol_name, colors, uvs, norms, mat_names, build_materials=True
+    objdata, vcol_name, colors, uvs, norms, mat_names, build_materials=True
 ):
-    # Flush BMesh (seams, sharp edges) to mesh.  Color and material indices are
-    # applied afterwards via the faster mesh-level foreach_set API, which avoids
-    # N_tris*3 Python-level BMesh attribute writes.
-    prev_mode = bpy.context.object.mode
-    bpy.ops.object.mode_set(mode="OBJECT")
-    bm.to_mesh(objdata)
+    # Geometry is already written into objdata (TriMesh.add_to_mesh) and edges
+    # are marked via mark_edges(); here we only apply custom split normals, then
+    # vertex colors and material indices via the faster mesh-level foreach_set
+    # API, which avoids N_tris*3 Python-level BMesh attribute writes.
     if len(norms) > 0:
         objdata.normals_split_custom_set(np.array(norms))
-    bpy.ops.object.mode_set(mode=prev_mode)
 
     if not colors:
         return
