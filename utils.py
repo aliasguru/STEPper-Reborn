@@ -212,7 +212,9 @@ def freeze_matrix(objs):
     for o in objs:
         mat = Matrix()
         mat[0][0], mat[1][1], mat[2][2] = o.matrix_world.to_scale()
-        if o.data:
+        # Only datablocks exposing transform() can have their scale baked in
+        # (meshes). For others (e.g. curves) the scale stays on the object.
+        if o.data and hasattr(o.data, "transform"):
             if o.data.users == 1:
                 o.data.transform(mat)
                 o.matrix_world = o.matrix_world.normalized()
@@ -293,6 +295,7 @@ class FakeAddonPreferences:
     build_materials = True
     hack_skip_zero_solids = False
     simpler_parameters = True
+    import_curves = False
 
 
 def GetAddonPreferences(context):

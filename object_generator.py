@@ -283,6 +283,40 @@ def build_nurbs(step_reader, shp, name):
         return bpy.context.view_layer.objects.active
 
 
+def build_curves_object(curve_data_list, name):
+    """Build a single CURVE object holding one NURBS spline per parsed curve.
+
+    Note: Blender NURBS splines cannot store arbitrary knot vectors. Clamped and
+    periodic ends are set via use_endpoint_u / use_cyclic_u, which matches the
+    common (clamped) CAD b-splines well; strongly non-uniform interior knots may
+    deviate slightly from the original geometry.
+    """
+    curve_data = bpy.data.curves.new(name, "CURVE")
+    curve_data.dimensions = "3D"
+
+    for cdata in curve_data_list:
+        pts = cdata.points
+        spline = curve_data.splines.new("NURBS")
+        spline.points.add(len(pts) - 1)  # one point exists by default
+        for i, p in enumerate(pts):
+            spline.points[i].co = p.as_vector()
+
+        # Blender requires 2 <= order_u <= 6 and order_u <= point count.
+        spline.order_u = max(2, min(cdata.degree + 1, len(pts), 6))
+        # Higher display/evaluation resolution than the default (12) for smoother
+        # curves; 30 is a good trade-off for typical CAD curves.
+        spline.resolution_u = 30
+        if cdata.periodic:
+            spline.use_cyclic_u = True
+        else:
+            spline.use_endpoint_u = True
+
+    obj = bpy.data.objects.new(name, curve_data)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    return obj
+
+
 def load_step(
     context,
     filepath,
@@ -311,6 +345,8 @@ def load_step(
         step_reader = GLOBAL_FILE_CACHE[filepath]
         print("Loaded file from cache")
 
+    prefs = GetAddonPreferences(context)
+
     tree = step_reader.tree
     scale = step_reader.scale
     if custom_scale is not None:
@@ -324,6 +360,7 @@ def load_step(
 
     created_objs = []
     created_names = {}
+    created_curve_names = {}
     created_uuid = {}
 
     # traverse shapes, render in "face" mode
@@ -361,19 +398,64 @@ def load_step(
                 source_obj = created_names[shape_name]
                 obj = source_obj.copy()
                 created_objs.append(obj)
+
+                # Instance the curve sibling too, if this shape produced one
+                if shape_name in created_curve_names:
+                    curve_obj = created_curve_names[shape_name].copy()
+                    curve_obj["STEP_tag"] = tag
+                    curve_obj["STEP_parent"] = parent_uuid
+                    curve_obj["STEP_uuid"] = self_uuid
+                    curve_obj["STEP_file"] = filepath
+                    curve_obj["STEP_name"] = obj_name
+                    curve_obj["STEP_tree_location"] = node_index
+                    created_objs.append(curve_obj)
             else:
                 print("[Build]", end="", flush=True)
 
-                # Create new mesh and object from scratch
-                obj = create_new_obj_with_mesh(obj_name)
-                bpy.ops.object.mode_set(mode="OBJECT")
-                build_mesh(context, step_reader, obj, shp, lin_deflection, ang_deflection)
+                # Optional curve import: extract free-standing edges/wires.
+                curve_data_list = (
+                    step_reader.build_curves(shp) if prefs.import_curves else []
+                )
+                # A shape with no faces is a pure wireframe; building a mesh for
+                # it would only create an empty Mesh container. Such shapes become
+                # CURVE objects directly when curve import yields geometry.
+                build_as_curve_only = (
+                    bool(curve_data_list) and not step_reader.has_faces(shp)
+                )
 
-                # TODO: nurbs changes here
-                # obj = build_nurbs(step_reader, shp, name)
+                if build_as_curve_only:
+                    obj = build_curves_object(curve_data_list, obj_name)
+                    created_objs.append(obj)
+                    created_names[shape_name] = obj
+                else:
+                    # Create new mesh and object from scratch
+                    obj = create_new_obj_with_mesh(obj_name)
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                    build_mesh(
+                        context, step_reader, obj, shp, lin_deflection, ang_deflection
+                    )
 
-                created_objs.append(obj)
-                created_names[shape_name] = obj
+                    # TODO: nurbs changes here
+                    # obj = build_nurbs(step_reader, shp, name)
+
+                    created_objs.append(obj)
+                    created_names[shape_name] = obj
+
+                    # Mixed shape (faces + free curves): the curve object is a
+                    # sibling sharing the same tree node, so hierarchy and
+                    # transforms apply identically.
+                    if curve_data_list:
+                        curve_obj = build_curves_object(
+                            curve_data_list, obj_name + ".curves"
+                        )
+                        curve_obj["STEP_tag"] = tag
+                        curve_obj["STEP_parent"] = parent_uuid
+                        curve_obj["STEP_uuid"] = self_uuid
+                        curve_obj["STEP_file"] = filepath
+                        curve_obj["STEP_name"] = obj_name
+                        curve_obj["STEP_tree_location"] = node_index
+                        created_objs.append(curve_obj)
+                        created_curve_names[shape_name] = curve_obj
 
                 # bpy.ops.object.mode_set(mode="OBJECT")
                 # build_mesh(step_reader, obj, shp, lin_deflection, ang_deflection)

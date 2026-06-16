@@ -30,11 +30,12 @@ from . import nurbs
 importlib.reload(trimesh)
 
 from OCP.BRep import BRep_Builder, BRep_Tool
-from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert
 from OCP.BRepLProp import BRepLProp_SLProps
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.BRepTools import BRepTools
+from OCP.Geom import Geom_TrimmedCurve
 from OCP.GeomConvert import GeomConvert
 from OCP.gp import gp
 from OCP.IFSelect import IFSelect_RetDone
@@ -57,9 +58,10 @@ from OCP.TopAbs import (
     TopAbs_VERTEX,
     TopAbs_WIRE,
 )
-from OCP.TopExp import TopExp_Explorer
+from OCP.TopExp import TopExp_Explorer, TopExp
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS_Compound, TopoDS_Shape, TopoDS
+from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import (
     XCAFDoc_DocumentTool,
@@ -139,6 +141,55 @@ def nurbs_parse(current_face):
     nbd.v_degree = occ_face.VDegree()
 
     return nbd
+
+
+def nurbs_curve_parse(edge):
+    """Get NURBS control points for a TopAbs_EDGE.
+
+    Returns a nurbs.NurbsCurveData, or None when the edge carries no usable
+    3D curve (e.g. it only has a parametric pcurve on a surface).
+    """
+
+    # The edge's parameter range. Edges are always bounded, so these are finite.
+    adaptor = BRepAdaptor_Curve(edge)
+    first = adaptor.FirstParameter()
+    last = adaptor.LastParameter()
+
+    # In this OCP build, Curve_s takes (edge, first, last) as inputs and returns
+    # the underlying Geom_Curve (the C++ output params are not written back).
+    geom_curve = BRep_Tool.Curve_s(edge, first, last)
+    if geom_curve is None:
+        return None  # e.g. seam / pcurve-only edges with no 3D curve
+
+    # Trim to the edge's parameter range. Required for unbounded curves such as
+    # lines (CurveToBSplineCurve needs a bounded curve); harmless for the rest.
+    try:
+        geom_curve = Geom_TrimmedCurve(geom_curve, first, last)
+    except Exception:
+        pass
+
+    # Convert any bounded curve (line, circle, ellipse, b-spline, trimmed) to a
+    # single b-spline representation so we can read poles / weights uniformly.
+    bspline = GeomConvert.CurveToBSplineCurve_s(geom_curve)
+    if bspline is None:
+        return None
+
+    n_poles = bspline.NbPoles()
+    if n_poles < 2:
+        return None
+
+    points = []
+    for i in range(1, n_poles + 1):
+        coords = bspline.Pole(i)
+        weight = bspline.Weight(i)
+        points.append(nurbs.NurbsPoint((coords.X(), coords.Y(), coords.Z(), weight)))
+
+    cdata = nurbs.NurbsCurveData(points)
+    cdata.degree = bspline.Degree()
+    cdata.closed = bspline.IsClosed()
+    cdata.periodic = bspline.IsPeriodic()
+
+    return cdata
 
 
 def force_ascii(i_file):
@@ -828,3 +879,37 @@ class ReadSTEP:
                 ex.Next()
 
         return nbs
+
+    def has_faces(self, shape):
+        """True if the shape contains at least one face (tessellatable surface)."""
+        return TopExp_Explorer(shape, TopAbs_FACE).More()
+
+    def build_curves(self, shape):
+        """Extract free-standing curves from a shape.
+
+        Only edges that do not bound any face are treated as curves; edges that
+        are part of a surface are left to the mesh/tessellation path. Returns a
+        list of nurbs.NurbsCurveData.
+        """
+        # Map every edge of the shape to its parent faces. Edges with an empty
+        # ancestor list are free wireframe curves.
+        edge_face_map = TopTools_IndexedDataMapOfShapeListOfShape()
+        TopExp.MapShapesAndAncestors_s(shape, TopAbs_EDGE, TopAbs_FACE, edge_face_map)
+
+        curves = []
+        for i in range(1, edge_face_map.Extent() + 1):
+            ancestors = edge_face_map.FindFromIndex(i)
+            if ancestors.Extent() != 0:
+                continue  # edge belongs to a surface -> not a free curve
+
+            edge = TopoDS.Edge(edge_face_map.FindKey(i))
+            try:
+                cdata = nurbs_curve_parse(edge)
+            except Exception as e:  # one malformed edge must not abort the import
+                print("Curve parse failed:", e)
+                cdata = None
+
+            if cdata is not None:
+                curves.append(cdata)
+
+        return curves

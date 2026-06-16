@@ -35,3 +35,16 @@ class NurbsData:
 
         self.u_degree = 2
         self.v_degree = 2
+
+
+class NurbsCurveData:
+    """Control-point representation of a single NURBS curve (1D)."""
+
+    def __init__(self, points):
+        assert len(points) >= 2
+        assert isinstance(points[0], NurbsPoint)
+        self.points = points
+
+        self.degree = 3
+        self.closed = False
+        self.periodic = False

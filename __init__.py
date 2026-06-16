@@ -605,6 +605,16 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         default=True,
     )
 
+    import_curves: bpy.props.BoolProperty(
+        name="Import Curves",
+        description=(
+            "Also import free-standing curves (edges/wires not bounding any surface) "
+            "from the STEP file as Blender NURBS curves. Surfaces, shells and solids "
+            "are imported as meshes as usual"
+        ),
+        default=False,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -616,6 +626,9 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
 
         row = layout.row()
         row.prop(self, "simpler_parameters")
+
+        row = layout.row()
+        row.prop(self, "import_curves")
 
         # row = layout.row()
         # row.prop(bpy.context.scene.stepper, "hierarchy_types")
