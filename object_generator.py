@@ -1,9 +1,11 @@
+import logging
 import ntpath
 import time
 import numpy as np
 import bmesh
 import bpy
 from collections import defaultdict
+from . import nurbs
 from .trimesh import TriMesh
 from .utils import (
     set_obj_matrix_world,
@@ -19,7 +21,12 @@ from .utils import (
     freeze_matrix,
 )
 
+logger = logging.getLogger(__package__)
+
 GLOBAL_FILE_CACHE = {}
+
+# Blender NURBS splines support order_u 2..6, i.e. degree 1..5.
+BLENDER_MAX_CURVE_DEGREE = 5
 
 
 def project_and_compare_normals(proj_plane_normal, norms_a, norms_b, margin_sq):
@@ -283,33 +290,67 @@ def build_nurbs(step_reader, shp, name):
         return bpy.context.view_layer.objects.active
 
 
+def _add_nurbs_spline(curve_data, pts, degree, periodic):
+    spline = curve_data.splines.new("NURBS")
+    spline.points.add(len(pts) - 1)  # one point exists by default
+    for i, p in enumerate(pts):
+        spline.points[i].co = p.as_vector()
+
+    # Blender requires 2 <= order_u <= 6 and order_u <= point count.
+    spline.order_u = max(2, min(degree + 1, len(pts), 6))
+    # Higher display/evaluation resolution than the default (12) for smoother
+    # curves; 30 is a good trade-off for typical CAD curves.
+    spline.resolution_u = 30
+    if periodic:
+        spline.use_cyclic_u = True
+    else:
+        spline.use_endpoint_u = True
+
+
 def build_curves_object(curve_data_list, name):
-    """Build a single CURVE object holding one NURBS spline per parsed curve.
+    """Build a single CURVE object from parsed NURBS curves.
 
     Note: Blender NURBS splines cannot store arbitrary knot vectors. Clamped and
     periodic ends are set via use_endpoint_u / use_cyclic_u, which matches the
     common (clamped) CAD b-splines well; strongly non-uniform interior knots may
     deviate slightly from the original geometry.
+
+    Curves with a degree above Blender's supported maximum (5) are degree-reduced
+    via nurbs.reduce_curve_degree and emitted as multiple single-span splines -
+    one per degree-reduced Bezier segment - since Blender can only represent a
+    single-span clamped spline exactly. This is why such a curve turns into more
+    (lower-degree) spans, matching how CAD packages perform the same conversion.
+    Curves that can't be reduced (periodic, or missing a source knot vector) fall
+    back to the previous behaviour of clamping order_u, which may deviate in shape.
     """
     curve_data = bpy.data.curves.new(name, "CURVE")
     curve_data.dimensions = "3D"
 
     for cdata in curve_data_list:
-        pts = cdata.points
-        spline = curve_data.splines.new("NURBS")
-        spline.points.add(len(pts) - 1)  # one point exists by default
-        for i, p in enumerate(pts):
-            spline.points[i].co = p.as_vector()
+        reduced = None
+        if cdata.degree > BLENDER_MAX_CURVE_DEGREE:
+            try:
+                reduced = nurbs.reduce_curve_degree(cdata, BLENDER_MAX_CURVE_DEGREE)
+            except Exception:
+                logger.warning(
+                    "Curve %r: degree reduction from %d to %d failed, "
+                    "falling back to order clamping",
+                    name, cdata.degree, BLENDER_MAX_CURVE_DEGREE, exc_info=True,
+                )
 
-        # Blender requires 2 <= order_u <= 6 and order_u <= point count.
-        spline.order_u = max(2, min(cdata.degree + 1, len(pts), 6))
-        # Higher display/evaluation resolution than the default (12) for smoother
-        # curves; 30 is a good trade-off for typical CAD curves.
-        spline.resolution_u = 30
-        if cdata.periodic:
-            spline.use_cyclic_u = True
+        if reduced is not None:
+            segments, max_residual, tol = reduced
+            if max_residual > tol:
+                logger.warning(
+                    "Curve %r: degree %d -> %d reduction could not reach the "
+                    "target tolerance (max control point error %.4g > %.4g), "
+                    "shape may deviate slightly",
+                    name, cdata.degree, BLENDER_MAX_CURVE_DEGREE, max_residual, tol,
+                )
+            for seg_pts in segments:
+                _add_nurbs_spline(curve_data, seg_pts, BLENDER_MAX_CURVE_DEGREE, periodic=False)
         else:
-            spline.use_endpoint_u = True
+            _add_nurbs_spline(curve_data, cdata.points, cdata.degree, cdata.periodic)
 
     obj = bpy.data.objects.new(name, curve_data)
     bpy.context.collection.objects.link(obj)

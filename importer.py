@@ -189,6 +189,10 @@ def nurbs_curve_parse(edge):
     cdata.closed = bspline.IsClosed()
     cdata.periodic = bspline.IsPeriodic()
 
+    n_knots = bspline.NbKnots()
+    cdata.knots = [bspline.Knot(i) for i in range(1, n_knots + 1)]
+    cdata.multiplicities = [bspline.Multiplicity(i) for i in range(1, n_knots + 1)]
+
     return cdata
 
 
