@@ -549,7 +549,11 @@ def load_step(
         tree_collection = bpy.data.collections.new(filename + ".hierarchy")
         bpy.context.scene.collection.children.link(tree_collection)
         hierarchy_collections = {}
+        # Objects whose immediate parent is the root node itself use the
+        # root's own index (0) as STEP_parent; -1 only ever occurs as the
+        # root node's own `parent` value. Map both to the top collection.
         hierarchy_collections[-1] = tree_collection
+        hierarchy_collections[tree.get_root_id()] = tree_collection
 
         def node_parse(node, level, parent_collection):
             # if "name" in node and node["children"] is not None:
