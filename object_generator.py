@@ -5,6 +5,7 @@ import numpy as np
 import bmesh
 import bpy
 from collections import defaultdict
+from mathutils import Matrix
 from . import nurbs
 from .trimesh import TriMesh
 from .utils import (
@@ -358,6 +359,69 @@ def build_curves_object(curve_data_list, name):
     return obj
 
 
+def convert_duplicates_to_collection_instances(created_objs, filename):
+    """
+    Test feature (ported from upstream STEPper-Reborn, adapted to our
+    linked-duplicate-based dedup): group already-built objects by shared
+    mesh data-block, move one representative per shape into a hidden
+    "components" collection, and replace every placement of that shape -
+    including the original - with a lightweight Empty using Blender's
+    native COLLECTION instancing. Meant to be compared against the
+    default `.copy()`-based linked duplicates for outliner/file-size
+    footprint, not to replace them outright.
+    """
+    by_mesh = defaultdict(list)
+    for obj in created_objs:
+        if obj.type == "MESH":
+            by_mesh[obj.data].append(obj)
+
+    duplicated = {mesh: objs for mesh, objs in by_mesh.items() if len(objs) > 1}
+    if not duplicated:
+        return
+
+    components_container = bpy.data.collections.new(filename + ".components")
+    bpy.context.scene.collection.children.link(components_container)
+    view_layer = bpy.context.view_layer
+    view_layer.layer_collection.children[components_container.name].exclude = True
+
+    for mesh_data, objs in duplicated.items():
+        source_obj = objs[0]
+        component_col = bpy.data.collections.new(source_obj.name + ".component")
+        components_container.children.link(component_col)
+
+        # snapshot placements before the source object's own transform is reset
+        placements = [
+            (
+                obj,
+                obj.name,
+                obj.matrix_world.copy(),
+                obj.users_collection[0],
+                max(obj.dimensions) or 1.0,
+            )
+            for obj in objs
+        ]
+
+        for c in list(source_obj.users_collection):
+            c.objects.unlink(source_obj)
+        source_obj.matrix_world = Matrix()
+        component_col.objects.link(source_obj)
+
+        for obj, name, world_mtx, orig_collection, size in placements:
+            empty = bpy.data.objects.new(name + ".instance", None)
+            empty.instance_type = "COLLECTION"
+            empty.instance_collection = component_col
+            empty.matrix_world = world_mtx
+            empty.empty_display_size = size * 0.1
+            for k, v in obj.items():
+                empty[k] = v
+            orig_collection.objects.link(empty)
+
+            if obj is not source_obj:
+                for c in list(obj.users_collection):
+                    c.objects.unlink(obj)
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def load_step(
     context,
     filepath,
@@ -370,7 +434,9 @@ def load_step(
 ):
     from . import importer
 
-    hierarchy_flat, hierarchy_tree, hierarchy_empties = choose_hierarchy_types(htypes)
+    hierarchy_flat, hierarchy_tree, hierarchy_empties, hierarchy_instances = (
+        choose_hierarchy_types(htypes)
+    )
 
     filename = "".join(ntpath.basename(filepath).split(".")[:-1])
 
@@ -594,6 +660,9 @@ def load_step(
 
     transform_to_up(up_as[0], created_objs, scale)
     freeze_matrix(created_objs)
+
+    if hierarchy_instances:
+        convert_duplicates_to_collection_instances(created_objs, filename)
 
     wm.progress_end()
     print(f"STEP loading time elapsed: {time.time()-start_time:.2f}")

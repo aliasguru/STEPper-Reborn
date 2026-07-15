@@ -138,6 +138,12 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             ("TREE", "Tree collection", "", 4),
             ("EMPTIES", "Parented empties", "", 6),
             # ("FLAT_AND_TREE", "Flat and tree collection", "", 0),
+            (
+                "TREE_INSTANCES",
+                "Tree + Collection instances",
+                "Tree collection, sharing duplicate parts via collection instances (test feature)",
+                8,
+            ),
         ],
         name="Tree hierarchy",
         default="FLAT",

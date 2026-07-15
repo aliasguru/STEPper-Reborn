@@ -132,6 +132,7 @@ def choose_hierarchy_types(htypes):
     hierarchy_flat = False
     hierarchy_tree = False
     hierarchy_empties = False
+    hierarchy_instances = False
 
     if htypes == "FLAT_AND_TREE":
         hierarchy_flat = True
@@ -142,10 +143,13 @@ def choose_hierarchy_types(htypes):
         hierarchy_flat = True
     elif htypes == "EMPTIES":
         hierarchy_empties = True
+    elif htypes == "TREE_INSTANCES":
+        hierarchy_tree = True
+        hierarchy_instances = True
     else:
         assert False, "Invalid input parameter"
 
-    return hierarchy_flat, hierarchy_tree, hierarchy_empties
+    return hierarchy_flat, hierarchy_tree, hierarchy_empties, hierarchy_instances
 
 
 def transform_to_up(up, chosen_objects, scale, to_cursor=True):
