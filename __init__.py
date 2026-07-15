@@ -54,6 +54,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
         description="How detailed you want the mesh to be",
         default=100,
         min=1,
+        soft_max=1000,
     )
 
     # In meter. Must be multiplied by 2000 to match OCC deflection length.
@@ -181,6 +182,7 @@ class STEP_OT_ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         description="How detailed you want the mesh to be",
         default=100,
         min=1,
+        soft_max=1000,
     )
 
     custom_scale: bpy.props.BoolProperty(

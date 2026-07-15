@@ -13,6 +13,7 @@
 
 """Mesh building utilities: geometry processing, material creation, timing."""
 
+import math
 import numpy as np
 import bpy
 from mathutils import Vector, Matrix
@@ -96,11 +97,20 @@ def obj_unlink_all(obj):
 
 
 def calculate_detail_level(dlev):
-    """Angular deflection, Linear deflection"""
-    if dlev < 100:
-        l_def = 100.0 / float(dlev)
-    else:
-        l_def = (100.0 / float(dlev)) ** 2.0
+    """
+    Angular deflection, Linear deflection. From detail level.
+
+    Test feature ported from upstream STEPper-Reborn: replaces the old
+    piecewise-linear/quadratic mapping with a single log-log curve
+    passing through (1, 100), (100, 0.002), (1000, 0.00001) - chosen by
+    upstream as visually more even from coarse to fine than the old
+    curve. Compare polygon counts/feel against the old formula above.
+    """
+    # 5/3-3/2*log(500) ~= -2.3818
+    # 1/2*log(500)-4/3 ~= 0.016152
+    l_def = 100 * 10 ** (
+        -2.3818 * math.log10(dlev) + 0.016152 * (math.log10(dlev)) ** 2
+    )
     return 0.8, l_def
 
 
